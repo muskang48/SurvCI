@@ -14,7 +14,7 @@ from surv_ci_info.train_utils import _reshape_tensor_with_nans
 from surv_ci_info.utilities import get_parameters, softmax_out, sample_weibull, sample_lognormal,auc
 from surv_ci_info.model import survci_info
 from lifelines.utils import concordance_index
-from surv_ci_info.losses import conditional_loss,unconditional_loss,mse_loss,imb_loss
+from surv_ci_info.losses import conditional_loss,unconditional_loss,mse_loss,imb_loss,l2_loss
 import pdb
 import torch
 import numpy as np
@@ -30,7 +30,7 @@ else:
 class survci_infoBase():
 
   def __init__(self, k=3, layers=None, distribution="Weibull",
-               temp=1000., discount=1.0,imb_func='lin_disc',p_ipm=0.5,p_alpha=1e-2,p_beta =1e-4 ):
+               temp=1000., discount=1.0,imb_func='lin_disc',p_ipm=0.5,p_alpha=1e-2,p_beta =1e-4,p_gamma=1e-1,p_lamda=1e-2):
     self.k = k
     self.layers = layers
     self.dist = distribution
@@ -41,6 +41,8 @@ class survci_infoBase():
     self.p_ipm = p_ipm
     self.p_alpha = p_alpha
     self.p_beta = p_beta
+    self.p_gamma = p_gamma #change
+    self.p_lamda = p_lamda #change
 
   def _gen_torch_model(self, inputdim, optimizer, num_treatments):
     """Helper function to return a torch model."""
@@ -49,7 +51,7 @@ class survci_infoBase():
                                      temp=self.temp,
                                      discount=self.discount,
                                      optimizer=optimizer,
-                                     num_treatments=2,imb_func=self.imb_func,p_ipm=self.p_ipm,p_alpha=self.p_alpha, p_beta = self.p_beta)
+                                     num_treatments=2,imb_func=self.imb_func,p_ipm=self.p_ipm,p_alpha=self.p_alpha, p_beta = self.p_beta,p_gamma=self.p_gamma,p_lamda=self.p_lamda)
   
 
   #def fit(self, x, t,c, e,w, vsize=0.15, val_data=None,
@@ -112,6 +114,7 @@ class survci_infoBase():
     imb = imb_loss(self.torch_model,x_val,w_val)
     mse = mse_loss(self.torch_model,x_val,y_val,e_val,w_val)
     l_f = factual_loss(self.torch_model,x_val,y_val,e_val,w_val)
+    l2 = l2_loss(self.torch_model) #change
 
     processed_data = self._prepocess_training_data(x, y,e,w, 0, None, 0)
     _, _,_, _,_, x_val, t_val,c_val, e_val,w_val = processed_data
@@ -127,7 +130,8 @@ class survci_infoBase():
     # mse = mse_loss(self.torch_model,x_val,t_val,c_val,w_val)
     # l_f = factual_loss(self.torch_model,x_val,t_val,c_val,e_val,w_val)
     ## mse = mse_total(self.torch_model,x_val,t_val,e_val,w_val)
-    loss = ll_loss + self.torch_model.p_alpha*imb + self.torch_model.p_beta*mse
+    loss = self.torch_model.p_gamma*ll_loss + self.torch_model.p_alpha*imb + self.torch_model.p_beta*mse +self.torch_model.p_lamda*l2_loss
+    
     ##loss = ll_loss+self.torch_model.p_alpha*imb + self.torch_model.p_beta*l_f
     
     return loss.detach().numpy() 
@@ -294,9 +298,16 @@ class survci_infoBase():
       treated_idx = torch.where(w_val>0)[0]                        
       control_idx = torch.where(w_val<1)[0]
       shape_co,scale_co,logits_co, shape_tr,scale_tr, logits_tr,shape_co_c,scale_co_c,logits_co_c, shape_tr_c,scale_tr_c, logits_tr_c  = get_parameters(self.torch_model,x_val,w_val)  #Predicted Factual Parameters 
+      t_pred_f_co = auc(self.torch_model, y_val,shape_co,scale_co, logits_co )
+      t_pred_f_tr = auc(self.torch_model, y_val, shape_tr,scale_tr,logits_tr)
+      c_pred_f_co = auc(self.torch_model, y_val, shape_co_c, scale_co_c, logits_co_c)
+      c_pred_f_tr = auc(self.torch_model, y_val,shape_tr_c, scale_tr_c, logits_tr_c)
+      y_pred_f_co = e_val[w_val==0]*t_pred_f_co + (1-e_val[w_val==0])*c_pred_f_co
+      y_pred_f_tr = e_val[w_val==1]*t_pred_f_tr + (1-e_val[w_val==1])*c_pred_f_tr
+      # y_pred_f_co = auc(self.torch_model, y_val,shape_co,scale_co, logits_co )
+      # y_pred_f_tr = auc(self.torch_model,y_val,shape_tr,scale_tr, logits_tr)
 
-      y_pred_f_co = auc(self.torch_model, y_val,shape_co,scale_co, logits_co )
-      y_pred_f_tr = auc(self.torch_model,y_val,shape_tr,scale_tr, logits_tr)
+      
       c_index_co = concordance_index(event_times=y_val[control_idx],predicted_scores=y_pred_f_co.detach().numpy(),event_observed=e_val[control_idx])
       c_index_tr = concordance_index(event_times=y_val[treated_idx],predicted_scores=y_pred_f_tr.detach().numpy(),event_observed=e_val[treated_idx])
       ci_index = (c_index_co + c_index_tr) * 0.5

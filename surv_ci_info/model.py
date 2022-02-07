@@ -27,7 +27,7 @@ def create_representation(inputdim, layers, activation):
   prevdim = inputdim
 
   for hidden in layers:
-    modules.append(nn.Linear(prevdim, hidden, bias=False))
+    modules.append(nn.Linear(prevdim, hidden, bias=True))
     modules.append(act)
     #modules.append(nn.Dropout(p=0.2))
     prevdim = hidden
@@ -114,7 +114,7 @@ class survci_info(nn.Module):
 
   def __init__(self, inputdim, k, layers=None, dist='Weibull',
                temp=1000., discount=1.0, optimizer='Adam',
-               num_treatments=2,imb_func='lin_disc',p_ipm=0.2,p_alpha=1e-2, p_beta = 1e-4):
+               num_treatments=2,imb_func='lin_disc',p_ipm=0.2,p_alpha=1e-2, p_beta = 1e-4,p_gamma=1e-1,p_lamda=5e-1):
     super(survci_info, self).__init__()
 
     self.k = k
@@ -127,6 +127,8 @@ class survci_info(nn.Module):
     self.p_ipm = p_ipm
     self.p_alpha = p_alpha
     self.p_beta = p_beta
+    self.p_gamma = p_gamma
+    self.p_lamda = p_lamda
 
     if layers is None:
       layers = []
@@ -170,7 +172,7 @@ class survci_info(nn.Module):
     eta_tr_c,beta_tr_c,logits_tr_c =  self.act(self.shapeg_c[str(2)](xrep_tr))+self.shape_c[str(2)].expand(dim1, -1),self.act(self.scaleg_c[str(2)](xrep_tr))+self.scale_c[str(2)].expand(dim1, -1),self.gate_c[str(2)](xrep_tr)/self.temp
     return(eta_co,beta_co,logits_co,eta_tr,beta_tr,logits_tr,eta_co_c,beta_co_c,logits_co_c,eta_tr_c,beta_tr_c,logits_tr_c)
     
-
+  
 
   def get_shape_scale(self,W):
     num_tr = int(W.sum())
@@ -201,3 +203,10 @@ class survci_info(nn.Module):
 
   def get_repr(self,x):
       return (self.embedding(x))
+  
+  def get_layers(self):
+    #return (self.modules)
+    return self.embedding
+
+  def get_layers_dim(self):
+     return (self.layers)

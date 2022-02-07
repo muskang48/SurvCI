@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import logging
 from tqdm import tqdm
 from copy import deepcopy
-from surv_ci_info.losses import conditional_loss,unconditional_loss,mse_loss,imb_loss
+from surv_ci_info.losses import conditional_loss,unconditional_loss,mse_loss,imb_loss,l2_loss
 from surv_ci_info.utilities import get_optimizer
 from surv_ci_info.model import survci_info
 
@@ -181,6 +181,8 @@ def train_survci_info(model,
   valid_mse_loss = []
   train_ll_loss = []
   valid_ll_loss = []
+  train_l2_loss = []
+  valid_l2_loss = []
   train_total_loss =[]
   valid_total_loss = []
   i = 0
@@ -188,7 +190,9 @@ def train_survci_info(model,
     epoch_ll_loss = 0
     epoch_ipm_loss = 0
     epoch_mse_loss = 0
+    epoch_l2_loss = 0
     epoch_total_loss = 0
+    
     for j in range(nbatches):
 
       xb = x_train[j*bs:(j+1)*bs]
@@ -206,9 +210,10 @@ def train_survci_info(model,
       loss_ll = conditional_loss(model,xb,_reshape_tensor_with_nans(yb),_reshape_tensor_with_nans(eb),_reshape_tensor_with_nans(wb),elbo=elbo)
       ipm_loss = imb_loss(model,xb,_reshape_tensor_with_nans(wb))
       mse = mse_loss(model,xb,_reshape_tensor_with_nans(yb),_reshape_tensor_with_nans(eb),_reshape_tensor_with_nans(wb))
+      l2 = l2_loss(model)
       #l_f = factual_loss(model,xb,_reshape_tensor_with_nans(tb),_reshape_tensor_with_nans(cb),_reshape_tensor_with_nans(eb),_reshape_tensor_with_nans(wb))
       #mse = mse_total(model,xb,_reshape_tensor_with_nans(tb),_reshape_tensor_with_nans(eb),_reshape_tensor_with_nans(wb))
-      loss = loss_ll + model.p_alpha*ipm_loss + model.p_beta*mse
+      loss = model.p_gamma*loss_ll + model.p_alpha*ipm_loss + model.p_beta*mse +model.p_lamda*l2 #Multiplied p_gamma
       #loss = loss_ll+model.p_alpha*ipm_loss + model.p_beta*l_f
       loss.backward()
       optimizer.step()
@@ -217,6 +222,7 @@ def train_survci_info(model,
       epoch_ipm_loss += ipm_loss.item()
       epoch_ll_loss += loss_ll.item()
       epoch_mse_loss += mse.item()
+      epoch_l2_loss += l2.item()
     
     # pdb.set_trace()
     # if 
@@ -224,27 +230,30 @@ def train_survci_info(model,
     train_ipm_loss.append(epoch_ipm_loss/nbatches)
     train_ll_loss.append(epoch_ll_loss/nbatches)
     train_mse_loss.append(epoch_mse_loss/nbatches)
+    train_l2_loss.append(epoch_l2_loss/nbatches)
     valid_loss = 0 
     
     model1 = model.eval()
     valid_ll = conditional_loss(model1,x_valid,y_valid_,e_valid_,W_valid_,elbo=False)
     valid_ipm = imb_loss(model1,x_valid,W_valid_)
     valid_mse = mse_loss(model1,x_valid,y_valid_,e_valid,W_valid_)
+    valid_l2 = l2_loss(model1)
     #valid_lf = factual_loss(model1,x_valid,t_valid_,e_valid_,W_valid_ )
     #valid_mse = mse_total(model,x_valid,t_valid_,e_valid_,W_valid_)
-    valid_loss = valid_ll + model1.p_alpha*valid_ipm + model1.p_beta*valid_mse
+    valid_loss = model1.p_gamma*valid_ll + model1.p_alpha*valid_ipm + model1.p_beta*valid_mse +model1.p_lamda*valid_l2
     #valid_loss = valid_ll+model.p_alpha*valid_ipm + model.p_beta*valid_lf
     
     valid_total_loss.append(valid_loss.item())
     valid_ll_loss.append(valid_ll.item())
     valid_ipm_loss.append(valid_ipm.item())
     valid_mse_loss.append(valid_mse.item())
+    valid_l2_loss.append(valid_l2.item())
 
     print('\n--------------------------------------------------')
-    print('Epoch: {}  Train Total Loss: {:.4f} Train elbo Loss: {:.4f}  Train ipm Loss: {:.4f} Train mse Loss: {:.4f}  '.format(i, loss, loss_ll, ipm_loss, mse))
+    print('Epoch: {}  Train Total Loss: {:.4f} Train elbo Loss: {:.4f}  Train ipm Loss: {:.4f} Train mse Loss: {:.4f}  Train L2 R Loss: {:.4f}'.format(i, loss, loss_ll, ipm_loss, mse, l2 ))
     print('--------------------------------------------------')
     print('\n--------------------------------------------------')
-    print('Epoch: {}  Val Total Loss: {:.4f}  Val elbo Loss: {:.4f} Val ipm Loss: {:.4f} Val mse Loss: {:.4f}  '.format(i, valid_loss,valid_ll, valid_ipm,valid_mse))
+    print('Epoch: {}  Val Total Loss: {:.4f}  Val elbo Loss: {:.4f} Val ipm Loss: {:.4f} Val mse Loss: {:.4f}   Val L2  Loss: {:4f}'.format(i, valid_loss,valid_ll, valid_ipm,valid_mse, valid_l2))
     print('--------------------------------------------------')
     valid_loss = valid_loss.detach().cpu().numpy()
     costs.append(float(valid_loss))
@@ -252,7 +261,7 @@ def train_survci_info(model,
 
     if costs[-1] >= oldcost:
       if patience == 2:
-        save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss)
+        save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,train_l2_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss,valid_l2_loss)
         minm = np.argmin(costs)
         model.load_state_dict(dics[minm])
 
@@ -267,7 +276,7 @@ def train_survci_info(model,
 
     oldcost = costs[-1]
   
-  save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss)
+  save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,train_l2_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss,valid_l2_loss)
   minm = np.argmin(costs)
   model.load_state_dict(dics[minm])
 
@@ -427,7 +436,7 @@ def train_survci_info(model,
 
 #   return model, i
 
-def save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss):
+def save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_loss,train_l2_loss,valid_total_loss,valid_ll_loss,valid_ipm_loss,valid_mse_loss,valid_l2_loss):
   plt.plot(train_total_loss,'-o',color='blue',label='Train')
   plt.plot(valid_total_loss,'-o',color='green',label='Valid')
   plt.xlabel('Epoch')
@@ -458,5 +467,12 @@ def save_plots(model,train_total_loss,train_ll_loss,train_ipm_loss,train_mse_los
   plt.ylabel('Negative Log Likelihood Loss')
   plt.legend(loc='best', fontsize=10)
   plt.title('Train vs Valid NLL Loss')
+  plt.show()
+  plt.plot(train_l2_loss,'-o',color='blue',label='Train')
+  plt.plot(valid_l2_loss,'-o',color='green',label='Valid')
+  plt.xlabel('Epoch')
+  plt.ylabel('L2 Loss')
+  plt.legend(loc='best', fontsize=10)
+  plt.title('Train vs Valid L2 Regularization Loss')
   plt.show()
   #plt.savefig('/content/drive/MyDrive/Colab Notebooks/Thesis/causal_survival_analysis/saved_models/plots/actg_synthetic/NLL_loss_K_{}_alpha_{}_beta_{}'.format(model.k, model.p_alpha,model.p_beta))
