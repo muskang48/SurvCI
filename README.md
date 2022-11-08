@@ -45,3 +45,7 @@ Hyperparameters used in experiments pertaining SurvCI-Info Model for different d
 | Synthetic,S2 | 3 | 10 | 3e-5 | 0.6| 0.2 |200 | 3e-4 |
 | Synthetic,S4 | 3 | 10 | 3e-5 | 0.6| 0.2 | 100 | 3e-4|
 | ACTG,s4 | 6 | 1 | 1e-6 | 0.5|0.2 |64| 3e-5 |
+
+```
+**NOTE** For running experiments for S1 and S2 setting we force few samples as treated samples in each batch during training to avoid Runtime error
+```
